@@ -1,0 +1,7 @@
+# 
+# TODO list for Perl module Crypt::SMimeEngine
+#
+
+- Implementing the module in OO style
+
+- Change the engine in running mode
