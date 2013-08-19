@@ -15,9 +15,10 @@ our @EXPORT_OK = qw( &init
                      &ossl_version
                      &ossl_path
                      &load_privk
-                     &getErrStr );
+                     &getErrStr 
+                     &digest );
 
-our $VERSION = '0.01';
+our $VERSION = '0.03';
 
 require XSLoader;
 XSLoader::load(__PACKAGE__, $VERSION);
@@ -75,12 +76,14 @@ engines support.
                             &getCertInfo 
                             &load_privk
                             &getErrStr 
+                            &digest
                             &ossl_version);
 
-  $cert_dir = 'certs/';       # path trusted certificate
-  $cert = 'certs/cert.pem';   # path signer certificate
-  $key = 'certs/key.pem';     # path private key
-  $other_cert = [];             # certs to add
+  $cert_dir = 'certs/';           # path trusted certificate
+  $cert = 'certs/cert.pem';       # path signer certificate
+  $key = 'certs/key.pem';         # path private key
+  $other_cert = [];               # certs to add
+  $file = 'files/testfile.bin';   # path file
   
   # let me inizialize the module with openssl engine (no hw engine)
   $engine_type = 'openssl';
@@ -130,6 +133,15 @@ engines support.
     print "Errore to get fingerprint: ".getErrStr(),"\n";
   }
   
+  # get the file digest
+  $schema = 'sha1';
+  $out = digest($file, $schema);
+  if(defined $out){
+    print "Digest ($file): $out\n";
+  }else{
+    print "Errore to get digest: ".getErrStr(),"\n";
+  }
+
   # get the CERTIFICATE INFORMATION
   $obj = getCertInfo($cert);
   if(ref($obj)){
@@ -261,6 +273,24 @@ Hash schema type; it can be 'md2' or 'md5' or 'sha1'.
 
 =back
 
+=item digest ( FILE, SCHEMA )
+
+Return the message digest of a supplied file in hexadecimal form.
+Return undef if an error occur; call getErrStr() for an error description.
+
+=over 4
+
+=item FILE
+
+Path of the file to get HASH.
+
+=item SCHEMA
+
+Hash schema type; it has to be openssl schema supported, see openssl dgst --help
+Ex: 'md4', 'md5', 'md2', 'sha', 'sha1', 'ripemd160', 'sha224', 'sha256', 'sha384', 'sha512' or 'whirlpool'
+
+=back
+
 =item getCertInfo ( CERT )
 
 Return a hash ref of the certificate information.
@@ -307,6 +337,8 @@ Return undef otherwise.
 
 Return the openssl version (ex: 'OpenSSL 0.9.7i 14 Oct 2005')
 
+=back
+
 =head1 BUGS
 
 Let me know...
@@ -318,19 +350,31 @@ Try to contact the author.
 =head1 AUTHOR
 
     Flavio Fanton
-    EXEntrica s.r.l.
-    fanton@exentrica.it
+    EXEntrica s.r.l. - Aruba PEC
+    flavio.fanton@staff.aruba.it
+    http://www.exentrica.it
+
+=head1 THANKS TO
+
+    Luca Di Vizio
+    EXEntrica s.r.l. - Aruba PEC
+    luca.divizio@staff.aruba.it
+    http://www.exentrica.it
+
+    Lorenzo Gaggini
+    EXEntrica s.r.l. - Aruba PEC
+    lorenzo.gaggini@staff.aruba.it
     http://www.exentrica.it
 
 =head1 COPYRIGHT
 
-        Copyright (c) 2008 EXEntrica s.r.l.
-        All rights reserved.
+    Copyright (c) 2008-2013 EXEntrica s.r.l.
+    All rights reserved.
 
-        You may distribute under the terms of the GNU General Public License.
+    You may distribute under the terms of the GNU General Public License.
 
-        The full text of the license can be found in the LICENSE file included
-        with this module.
+    The full text of the license can be found in the LICENSE file included
+    with this module.
 
 
 =head1 SEE ALSO

@@ -1,7 +1,6 @@
 MANIFEST
 README
 LICENSE
-Todo
 Changes
 Makefile.PL
 ppport.h
@@ -14,3 +13,8 @@ t/004_verify.t
 t/005_getFingerprint.t
 t/006_getCertInfo.t
 t/007_load_privk.t
+t/008_digest.t
+t/mail/mail.txt
+t/certs/cert.pem
+t/certs/key.pem
+t/files/testfile.bin

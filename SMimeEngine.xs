@@ -1,7 +1,7 @@
 /*
 * Project       OpenPec
 * file name:    SMimeEngine.xs
-* Version:      0.0.1
+* Version:      0.0.3
 *
 * DESCRIPTION
 * Interfaccia verso la lib crypto di openssl.
@@ -14,13 +14,20 @@
 * probabilmente c'e da liberare ancora qualcosa, la free_init non basta
 *
 * Developer:
-* Fanton Flavio - fanton@exentrica.it
+* Fanton Flavio - flavio.fanton@staff.aruba.it
+* Di Vizio Luca - luca.divizio@staff.aruba.it
+* Gaggini Lorenzo - lorenzo.gaggini@staff.aruba.it
 *
 * History [++date++ - ++author++]:
 * creation: 21/03/2007 - Fanton Flavio
 * modification:
 *
-*  Copyright (C) 2006  EXENTRICA s.r.l.,  All Rights Reserved.
+*  - 25/03/2010 - Di Vizio Luca
+*       Supporto per SSM, bug fix 64 bit, port to openssl 1.0
+*  - 13/08/2013 - Gaggini Lorenzo
+*       Funzione digest per calcolo hash
+*
+*  Copyright (C) 2006-2013  EXENTRICA s.r.l.,  All Rights Reserved.
 *   via Roma 43 - 57126 Livorno (LI) - Italy
 *   via Giuntini, 25 / int. 9 - 56023 Navacchio (PI) - Italy
 *   tel. +39 050 754 703 - fax +39 050 754 707
@@ -64,13 +71,19 @@
 #include <openssl/pem.h>
 #include <openssl/ui.h>
 #include <openssl/pkcs7.h>
+#include <openssl/stack.h>
+#include <openssl/safestack.h>
+#include <openssl/opensslv.h>
+#include <openssl/ossl_typ.h>
 
 #define ERRSTR_MAXLINE 100
 #define MAX_CERTS 10
+#define DIGEST_BUFF_SIZE 4096
 
 static X509_STORE *store;
 static char *ca_dir;
-static unsigned char errstr[ERRSTR_MAXLINE];
+static unsigned char errstring[ERRSTR_MAXLINE];
+extern char errstr[ERRSTR_MAXLINE];
 
 static UI_METHOD *ui_method;
 static ENGINE *eng;
@@ -103,12 +116,15 @@ destroy_ui_method(){
 
 static int
 verify_callback(int ok, X509_STORE_CTX *stor){
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     if (!ok)
-        sprintf(errstr, "Error: %s",X509_verify_cert_error_string(stor->error));
+        sprintf(errstring, "Error: %s",X509_verify_cert_error_string(stor->error));
     return ok;
 }
+
+int (*sign)(char *fname, char *outfname);
+int sign_old(char *fname, char *outfname);
 
 static X509_STORE *
 create_store(void){
@@ -116,20 +132,20 @@ create_store(void){
     X509_LOOKUP *lookup;
 
     if (!(mystore = X509_STORE_new())){
-        sprintf(errstr, "Error creating X509_STORE_CTX object");
+        sprintf(errstring, "Error creating X509_STORE_CTX object");
         goto err;
     }
     X509_STORE_set_verify_cb_func(mystore, verify_callback);
     if (X509_STORE_load_locations(mystore, NULL, ca_dir) != 1){
-        sprintf(errstr, "Error loading the CA file or directory");
+        sprintf(errstring, "Error loading the CA file or directory");
         goto err;
     }
     if (X509_STORE_set_default_paths(mystore) != 1){
-        sprintf(errstr, "Error loading the system-wide CA certificates");
+        sprintf(errstring, "Error loading the system-wide CA certificates");
         goto err;
     }
     if (!(lookup = X509_STORE_add_lookup(mystore, X509_LOOKUP_file()))){
-        sprintf(errstr, "Error creating X509_LOOKUP object");
+        sprintf(errstring, "Error creating X509_LOOKUP object");
         goto err;
     }
 
@@ -144,7 +160,7 @@ create_store(void){
  */
 char *
 getErrStr(){
-    return errstr;
+    return errstring;
 }
 
 
@@ -194,28 +210,28 @@ load_engine(char *eng, char *libpath) {
     //    return 0;
     //  }
 
-    if(!ENGINE_ctrl_cmd_string(e,
-                     "SO_PATH",
-                     libpath, 0)) {
-        ENGINE_free(e);
-        return 0;
-    }
+    //if(!ENGINE_ctrl_cmd_string(e,
+    //                 "SO_PATH",
+    //                libpath, 0)) {
+    //    ENGINE_free(e);
+    //    return 0;
+    //}
 
-    if(!ENGINE_ctrl_cmd_string(e,
-                     "THREAD_LOCKING",
-                     "1", 0)) {
-        //ERR_print_errors_fp(stdout);
-        ENGINE_free(e);
-        return 0;
-    }
+    //if(!ENGINE_ctrl_cmd_string(e,
+    //                 "THREAD_LOCKING",
+    //                 "1", 0)) {
+    //    //ERR_print_errors_fp(stdout);
+    //    ENGINE_free(e);
+    //    return 0;
+    //}
 
-    if(!ENGINE_ctrl_cmd_string(e,
-                     "FORK_CHECK",
-                     "1", 0)) {
-        //ERR_print_errors_fp(stdout);
-        ENGINE_free(e);
-        return 0;
-    }
+    //if(!ENGINE_ctrl_cmd_string(e,
+    //                 "FORK_CHECK",
+    //                 "1", 0)) {
+    //    //ERR_print_errors_fp(stdout);
+    //    ENGINE_free(e);
+    //    return 0;
+    //}
 
     if(!ENGINE_init(e)) {
         //ERR_print_errors_fp(stdout);
@@ -240,7 +256,7 @@ load_engine(char *eng, char *libpath) {
  * imposta il certificato di root e il path dove ricercare eventuali certificati
  * per la verifica della catena
  *
- * return 0 se ok, 1 altrimenti e imposta la var errstr
+ * return 0 se ok, 1 altrimenti e imposta la var errstring
  */
 int
 init(   char *cert_dir,
@@ -252,7 +268,7 @@ init(   char *cert_dir,
         char *libeng_file){
 
     int fd;
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     if(init_status){
 //        free_init();
@@ -271,7 +287,7 @@ init(   char *cert_dir,
     // ca path existence check
     DIR *dd;
     if( (dd = opendir(cert_dir)) == NULL ){
-        sprintf(errstr, "Error to access to CA path: %s", cert_dir);
+        sprintf(errstring, "Error to access to CA path: %s", cert_dir);
         destroy_ui_method();
         return 1;
     }
@@ -280,7 +296,7 @@ init(   char *cert_dir,
 
     if (!(store = create_store())){
         destroy_ui_method();
-        sprintf(errstr, "Error setting up X509_STORE object");
+        sprintf(errstring, "Error setting up X509_STORE object");
         return 1;
     }
 
@@ -288,7 +304,7 @@ init(   char *cert_dir,
     (signer) = load_cert(cert_file);
     if(!(signer)) {
         destroy_ui_method();
-        sprintf(errstr, "Error to load certificate file: %s", cert_file);
+        sprintf(errstring, "Error to load certificate file: %s", cert_file);
         return 1;
     }
 
@@ -302,7 +318,7 @@ init(   char *cert_dir,
             FILE *fp;
             if (!(fp = fopen(other_cert[i], "r")) || !(tmp = PEM_read_X509(fp, NULL, NULL, NULL))){
                 destroy_ui_method();
-                sprintf(errstr, "Error reading chain certificate");
+                sprintf(errstring, "Error reading chain certificate");
                 return 1;
             }
             sk_X509_push(other4sign, tmp);
@@ -310,33 +326,33 @@ init(   char *cert_dir,
         }
     }
 
-    if( engine_name && strcmp(engine_name,"openssl") != 0 ){
-        // LOAD ENGINE HW
+    sign = &sign_old;
+    if( engine_name && strcmp(engine_name,"openssl") != 0 ) {
+       // LOAD ENGINE HW
         eng = load_engine(engine_name, libeng_file);
         if(!(eng)) {
             destroy_ui_method();
-            sprintf(errstr, "Error to load engine: %s (%s)", engine_name, libeng_file);
+            sprintf(errstring, "Error to load engine: %s (%s)", engine_name, libeng_file);
             return 1;
         }
 
         if( !(pkey = ENGINE_load_private_key(eng, key_file, ui_method, NULL)) ){
             destroy_ui_method();
             ENGINE_cleanup();
-            sprintf(errstr, "Error to load private key file: %s", key_file);
+            sprintf(errstring, "Error to load private key file: %s", key_file);
             return 1;
         }
-    }else{
-        // ENGINE SW
+     } else {
         FILE *fp;
         if (!(fp = fopen(key_file, "r")) ||
             !(pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL))){
 
             destroy_ui_method();
-            sprintf(errstr, "Error to access to key file: %s", key_file);
+            sprintf(errstring, "Error to access to key file: %s", key_file);
             return 1;
         }
-       close((int) fp);
-    }
+       close((int)(uintptr_t)fp);
+     }
 
     init_status = 1;
     return 0;
@@ -353,38 +369,38 @@ init(   char *cert_dir,
  * 1. path mail to sign (input)
  * 2. path mail signed (output)
  *
- * return 0 se ok, 1 altrimenti e imposta la var errstr
+ * return 0 se ok, 1 altrimenti e imposta la var errstring
  */
 int
-sign(char *fname, char *outfname){
+sign_old(char *fname, char *outfname){
     BIO *biom, *out;
     PKCS7 *r;
     //STACK_OF(X509) *other = NULL;
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     if(!init_status){
-        sprintf(errstr, "init must be run correctly");
+        sprintf(errstring, "init must be run correctly");
         return 1;
     }
 
 
     biom = BIO_new_file(fname, "r");
     if(!biom) {
-        sprintf(errstr, "Error to access to file: %s", fname);
+        sprintf(errstring, "Error to access to file: %s", fname);
         return 1;
     }
 
     //r = PKCS7_sign(signer, pkey, other, biom, PKCS7_DETACHED);
     r = PKCS7_sign(signer, pkey, other4sign, biom, PKCS7_DETACHED);
     if(!r) {
-        //ERR_print_errors_fp(stdout);
-        sprintf(errstr, "Error to sign file %s", fname);
+        ERR_print_errors_fp(stdout);
+        sprintf(errstring, "Error to sign file %s", fname);
         BIO_free(biom);
         return 1;
     }
     if(BIO_reset(biom) != 0) {
         //ERR_print_errors_fp(stdout);
-        sprintf(errstr, "Error to free BIO object");
+        sprintf(errstring, "Error to free BIO object");
         BIO_free(biom);
         return 1;
     }
@@ -394,7 +410,7 @@ sign(char *fname, char *outfname){
         SMIME_write_PKCS7(out, r, biom, PKCS7_DETACHED);
     } else {
         //ERR_print_errors_fp(stdout);
-        sprintf(errstr, "Error to write signed file %s", outfname);
+        sprintf(errstring, "Error to write signed file %s", outfname);
         BIO_free(biom);
         return 1;
     }
@@ -407,7 +423,6 @@ sign(char *fname, char *outfname){
 
     return 0;
 }
-
 
 /*
  * Verifica un messaggio SMIME
@@ -423,7 +438,7 @@ sign(char *fname, char *outfname){
  * 2. path file certs signer
  * 3. boolean: se true non verifica la catena, false altrimenti
  *
- * return 0 se ok, diverso da 0 altrimenti e imposta la var errstr
+ * return 0 se ok, diverso da 0 altrimenti e imposta la var errstring
  */
 int
 verify (char *smime_file, char *signer_file, int noverify){
@@ -432,10 +447,10 @@ verify (char *smime_file, char *signer_file, int noverify){
     int flag;
     int out;
 
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     if(!init_status){
-        sprintf(errstr, "init must be run correctly");
+        sprintf(errstring, "init must be run correctly");
         return 1;
     }
 
@@ -447,12 +462,12 @@ verify (char *smime_file, char *signer_file, int noverify){
 
     bio_mail = BIO_new_file(smime_file, "r");
     if (!(pkcs7 = SMIME_read_PKCS7(bio_mail, &bio_pkcs7))){
-        sprintf(errstr, "Error to access to mail file: %s", smime_file);
+        sprintf(errstring, "Error to access to mail file: %s", smime_file);
         goto err;
     }
 
     if ( (out = PKCS7_verify(pkcs7, NULL, store, bio_pkcs7, NULL, flag) ) != 1){
-        sprintf(errstr, "Verify failed, %d", out);
+        sprintf(errstring, "Verify failed, %d", out);
         PKCS7_free(pkcs7);
         goto err;
     }
@@ -462,13 +477,13 @@ verify (char *smime_file, char *signer_file, int noverify){
         STACK_OF(X509) *signers;
         signers = PKCS7_get0_signers(pkcs7, NULL, flag);
         if(!save_certs(signer_file, signers)) {
-            sprintf(errstr, "Error writing signers to %s", signer_file);
+            sprintf(errstring, "Error writing signers to %s", signer_file);
             goto err;
         }
         sk_X509_free(signers);
     }
 
-    sprintf(errstr, "Verify Ok");
+    sprintf(errstring, "Verify Ok");
 
     PKCS7_free(pkcs7);
     BIO_free_all(bio_mail);
@@ -494,7 +509,7 @@ verify (char *smime_file, char *signer_file, int noverify){
  * 5. enddate
  * 6. v3_email
  *
- * INFOCERT se ok, null altrimenti e imposta la var errstr
+ * INFOCERT se ok, null altrimenti e imposta la var errstring
  */
 int
 getCertInfo(char *file_cert, INFOCERT *x509_out){
@@ -503,7 +518,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     char *tmp;
     int n;
 
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     /*
     char *issuer;
@@ -518,7 +533,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     if (!(fp = fopen(file_cert, "r")) ||
         !(cert = PEM_read_X509(fp, NULL, NULL, NULL))){
 
-        sprintf(errstr, "Error reading CA certificate in %s", file_cert);
+        sprintf(errstring, "Error reading CA certificate in %s", file_cert);
         goto err;
     }
     fclose(fp);
@@ -573,8 +588,8 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     BIO_free(outmem);
     outmem = NULL;
 
-        STACK *emlst;
-        emlst = (STACK *)X509_get1_email(cert);
+        const _STACK *emlst;
+        emlst = (_STACK*)(uintptr_t) X509_get1_email(cert);
         if(sk_num(emlst)>0){
             /* prendo solo il primo */
             n = strlen( sk_value(emlst, 0) );
@@ -618,7 +633,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
  * 2. hash schema (md2/md5/sha1)
  * 3. param to out
  *
- * 0 se ok, 1 altrimenti e imposta la var errstr
+ * 0 se ok, 1 altrimenti e imposta la var errstring
  */
 int
 getFingerprint (char *filecert, char *hschema, char **strOut) {
@@ -626,12 +641,12 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
     const EVP_MD *digest = NULL;
     char *strTmp;
 
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     c = load_cert(filecert);
 
     if(!(c)) {
-        sprintf(errstr, "Error to load certificate: %s", filecert);
+        sprintf(errstring, "Error to load certificate: %s", filecert);
         return 1;
     }
 
@@ -646,7 +661,7 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
     }
 
     if(!digest){
-        sprintf(errstr, "Unknown schema: %s", hschema);
+        sprintf(errstring, "Unknown schema: %s", hschema);
         X509_free(c);
         return 1;
     }
@@ -654,16 +669,16 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
     unsigned int n;
     unsigned char md[EVP_MAX_MD_SIZE];
         if (!X509_digest(c,digest,md,&n)){
-            sprintf(errstr, "out of memory");
+            sprintf(errstring, "out of memory");
             X509_free(c);
             return 1;
     }
     X509_free(c);
 
     *strOut = (char *) malloc (sizeof(md)+20);
-    strTmp = (char *) malloc (2);
-    **strOut = (char) NULL;
-    *strTmp = (char) NULL;
+    strTmp = (char *) malloc (4);
+    **strOut = (char )(uintptr_t) NULL;
+    *strTmp = (char )(uintptr_t) NULL;
         int j;
         for (j=0; j<(int)n; j++){
                 sprintf(strTmp,"%02X%c",md[j],(j+1 == (int)n)?'\0':':');
@@ -725,7 +740,7 @@ ossl_param(int param, char **strOut){
 
 int
 load_privk(char *prk, char *ncert){
-    strcpy(errstr,"");
+    strcpy(errstring,"");
 
     if(pkey){
         EVP_PKEY_free(pkey);
@@ -740,7 +755,7 @@ load_privk(char *prk, char *ncert){
         if( !(pkey = ENGINE_load_private_key(eng, prk, ui_method, NULL)) ){
             destroy_ui_method();
             ENGINE_cleanup();
-            sprintf(errstr, "Error to load private key file: %s", prk);
+            sprintf(errstring, "Error to load private key file: %s", prk);
             return 1;
         }
     }else{
@@ -750,10 +765,10 @@ load_privk(char *prk, char *ncert){
             !(pkey = PEM_read_PrivateKey(fp, NULL, NULL, NULL))){
 
             destroy_ui_method();
-            sprintf(errstr, "Error to access to key file: %s", prk);
+            sprintf(errstring, "Error to access to key file: %s", prk);
             return 1;
         }
-        close((int)fp);
+        close((int)(uintptr_t)fp);
     }
 
     //load cert
@@ -761,7 +776,7 @@ load_privk(char *prk, char *ncert){
     (signer) = load_cert(ncert);
     if(!(signer)) {
         destroy_ui_method();
-        sprintf(errstr, "Error to load certificate file: %s", ncert);
+        sprintf(errstring, "Error to load certificate file: %s", ncert);
         return 1;
     }
 
@@ -769,6 +784,69 @@ load_privk(char *prk, char *ncert){
 
 }
 
+/*
+ * Return a selected type digest of input file
+ *
+ * 1 - input file path
+ * 2 - hash type
+ * 3 - calculated hash
+ *
+ * o se ok, 1 altrimenti e popola errstr
+ */
+
+int
+digest(char *fname, char *dname, char **digestOut){
+
+    const EVP_MD *dtype;
+    EVP_MD_CTX *mdctx;
+    int i, data_count, dtype_len;
+    strcpy(errstring,"");
+
+    // initialize hash context and retrieve digest type by name
+    OpenSSL_add_all_digests();
+    if(!(dtype = EVP_get_digestbyname(dname))) {
+        sprintf(errstring, "Unknown message digest: %s", dname);
+        return 1;
+    }
+
+    // retrieve data to hash
+    FILE *fp;
+    if (!(fp = fopen(fname, "r"))) {
+        sprintf(errstring, "Error to open file to hash: %s", fname);
+        return 1;
+    }
+
+    char *data;
+    unsigned char digest_str[EVP_MAX_MD_SIZE];
+    data = malloc(DIGEST_BUFF_SIZE);
+
+    // hash calculation
+    mdctx = EVP_MD_CTX_create();
+    EVP_DigestInit_ex(mdctx, dtype, NULL);
+    while ((data_count = fread(data,1,DIGEST_BUFF_SIZE,fp)) == DIGEST_BUFF_SIZE)
+        EVP_DigestUpdate(mdctx, data, data_count);
+    EVP_DigestUpdate(mdctx, data, data_count);
+    EVP_DigestFinal_ex(mdctx, digest_str, &dtype_len);
+
+    // clean
+    EVP_MD_CTX_destroy(mdctx);
+    fclose(fp);
+    free(data);
+
+    //output
+    *digestOut = malloc(sizeof(char*) * dtype_len);
+    char* digestStart = *digestOut;
+
+    for(i = 0; i < dtype_len; i++)
+    {
+        sprintf(*digestOut, "%02x", digest_str[i]);
+        (*digestOut)+=2;
+    }
+
+    *digestOut = digestStart;
+
+    return 0;
+}
 
 /*********************************/
 
@@ -888,4 +966,21 @@ load_privk(privk, newcert)
         RETVAL = load_privk(privk, newcert);
     OUTPUT:
         RETVAL
-        
+
+SV *
+digest(fname, dname)
+        char * fname
+        char * dname
+    INIT:
+        char* digestOut;
+        int intOut;
+    CODE:
+        intOut = digest(fname, dname, &digestOut);
+        if (intOut == 0){
+            RETVAL = newSVpv(digestOut,0);
+            free(digestOut);
+        }else{
+            XSRETURN_UNDEF;
+        }
+    OUTPUT:
+        RETVAL
