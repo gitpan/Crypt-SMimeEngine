@@ -1,7 +1,7 @@
 /*
 * Project       OpenPec
 * file name:    SMimeEngine.xs
-* Version:      0.0.3
+* Version:      0.0.4
 *
 * DESCRIPTION
 * Interfaccia verso la lib crypto di openssl.

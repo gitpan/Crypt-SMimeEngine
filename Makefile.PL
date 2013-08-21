@@ -9,6 +9,6 @@ WriteMakefile(
     PREREQ_PM    => {
                      'Test::Simple' => 0.44,
                     },
-    LIBS         => ['-L/opt/openssl/lib -lssl -lcrypto'],
+    LIBS         => ['-lssl -lcrypto'],
     INC          => '-I.'
 );
