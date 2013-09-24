@@ -17,6 +17,7 @@
 * Fanton Flavio - flavio.fanton@staff.aruba.it
 * Di Vizio Luca - luca.divizio@staff.aruba.it
 * Gaggini Lorenzo - lorenzo.gaggini@staff.aruba.it
+* Thanks to Emanuele Tomasi - et@libersoft.it
 *
 * History [++date++ - ++author++]:
 * creation: 21/03/2007 - Fanton Flavio
@@ -68,6 +69,7 @@
 #include <openssl/engine.h>
 #include <openssl/err.h>
 #include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #include <openssl/pem.h>
 #include <openssl/ui.h>
 #include <openssl/pkcs7.h>
@@ -75,6 +77,7 @@
 #include <openssl/safestack.h>
 #include <openssl/opensslv.h>
 #include <openssl/ossl_typ.h>
+#include <openssl/evp.h>
 
 #define ERRSTR_MAXLINE 100
 #define MAX_CERTS 10
@@ -82,7 +85,7 @@
 
 static X509_STORE *store;
 static char *ca_dir;
-static unsigned char errstring[ERRSTR_MAXLINE];
+static char errstring[ERRSTR_MAXLINE];
 extern char errstr[ERRSTR_MAXLINE];
 
 static UI_METHOD *ui_method;
@@ -93,17 +96,18 @@ static STACK_OF(X509) *other4sign = NULL;
 static int init_status = 0;
 
 typedef struct INFOCERT {
-     unsigned char *issuer;
-     unsigned char *subject;
-     unsigned char *serial;
-     unsigned char *startdate;
-     unsigned char *enddate;
-     unsigned char *v3_email;
+     char *issuer;
+     char *subject;
+     char *serial;
+     char *startdate;
+     char *enddate;
+     char *v3_email;
 } INFOCERT;
 
 
 int SSL_library_init(void);
 void free_init();
+int save_certs(char *, STACK_OF(X509) *);
 /*****************************************/
 
 static void
@@ -267,7 +271,6 @@ init(   char *cert_dir,
         char *engine_name,
         char *libeng_file){
 
-    int fd;
     strcpy(errstring,"");
 
     if(init_status){
@@ -542,7 +545,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     BIO *outmem = BIO_new(BIO_s_mem());
     X509_NAME_print_ex(outmem, X509_get_issuer_name(cert), 0,0);
     n = BIO_get_mem_data(outmem, &tmp);
-    x509_out->issuer = (unsigned char *) malloc (n+1);
+    x509_out->issuer = malloc (n+1);
     x509_out->issuer[n]='\0';
     memcpy(x509_out->issuer,tmp,n);
     BIO_free(outmem);
@@ -552,7 +555,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     outmem = BIO_new(BIO_s_mem());
     X509_NAME_print_ex(outmem, X509_get_subject_name(cert), 0,0);
     n = BIO_get_mem_data(outmem, &tmp);
-    x509_out->subject = (unsigned char *) malloc (n+1);
+    x509_out->subject = malloc (n+1);
     x509_out->subject[n]='\0';
     memcpy(x509_out->subject,tmp,n);
     BIO_free(outmem);
@@ -562,7 +565,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     outmem = BIO_new(BIO_s_mem());
     i2a_ASN1_INTEGER(outmem, cert->cert_info->serialNumber);
     n = BIO_get_mem_data(outmem, &tmp);
-    x509_out->serial = (unsigned char *) malloc (n+1);
+    x509_out->serial = malloc (n+1);
     x509_out->serial[n]='\0';
     memcpy(x509_out->serial,tmp,n);
     BIO_free(outmem);
@@ -572,7 +575,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     outmem = BIO_new(BIO_s_mem());
     ASN1_TIME_print(outmem, X509_get_notBefore(cert));
     n = BIO_get_mem_data(outmem, &tmp);
-    x509_out->startdate = (unsigned char *) malloc (n+1);
+    x509_out->startdate = malloc (n+1);
     x509_out->startdate[n]='\0';
     memcpy(x509_out->startdate,tmp,n);
     BIO_free(outmem);
@@ -582,7 +585,7 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     outmem = BIO_new(BIO_s_mem());
     ASN1_TIME_print(outmem, X509_get_notAfter(cert));
     n = BIO_get_mem_data(outmem, &tmp);
-    x509_out->enddate = (unsigned char *) malloc (n+1);
+    x509_out->enddate = malloc (n+1);
     x509_out->enddate[n]='\0';
     memcpy(x509_out->enddate,tmp,n);
     BIO_free(outmem);
@@ -593,12 +596,12 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
         if(sk_num(emlst)>0){
             /* prendo solo il primo */
             n = strlen( sk_value(emlst, 0) );
-            x509_out->v3_email = (char *) malloc (n+1);
+            x509_out->v3_email = malloc (n+1);
             x509_out->v3_email[n] = '\0';
             memcpy(x509_out->v3_email,sk_value(emlst, 0),n);
-                X509_email_free(emlst);
+            X509_email_free((STACK_OF(OPENSSL_STRING) *)emlst);
         }else{
-            x509_out->v3_email = (char *) malloc (1);
+            x509_out->v3_email = malloc (1);
             x509_out->v3_email[0] = '\0';
     }
     X509_free(cert);
@@ -650,16 +653,21 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
         return 1;
     }
 
+    #ifndef OPENSSL_NO_SHA
     if( !strcmp(hschema,"sha1") ){
         digest = EVP_sha1();
     }
+    #endif
+    #ifndef OPENSSL_NO_MD5
     if( !strcmp(hschema,"md5") ){
         digest = EVP_md5();
     }
+    #endif
+    #ifndef OPENSSL_NO_MD2
     if( !strcmp(hschema,"md2") ){
         digest = EVP_md2();
     }
-
+    #endif
     if(!digest){
         sprintf(errstring, "Unknown schema: %s", hschema);
         X509_free(c);
@@ -799,7 +807,8 @@ digest(char *fname, char *dname, char **digestOut){
 
     const EVP_MD *dtype;
     EVP_MD_CTX *mdctx;
-    int i, data_count, dtype_len;
+    int i, data_count;
+    unsigned int dtype_len;
     strcpy(errstring,"");
 
     // initialize hash context and retrieve digest type by name
@@ -869,14 +878,18 @@ getCertInfo(file_cert)
         i = getCertInfo(file_cert, &x509);
         if(i == 0){
             HV * rh;
+            SV **tmp;
             rh = (HV *)sv_2mortal((SV *)newHV());
 
-            hv_store(rh, "issuer", 6, newSVpv(x509.issuer,0), 0);
-            hv_store(rh, "subject", 7, newSVpv(x509.subject,0), 0);
-            hv_store(rh, "serial", 6, newSVpv(x509.serial,0), 0);
-            hv_store(rh, "startdate", 9, newSVpv(x509.startdate,0), 0);
-            hv_store(rh, "enddate", 7, newSVpv(x509.enddate,0), 0);
-            hv_store(rh, "v3_email", 8, newSVpv(x509.v3_email,0), 0);
+            tmp = hv_store(rh, "issuer", 6, newSVpv(x509.issuer, 0), 0);
+            tmp = hv_store(rh, "subject", 7, newSVpv(x509.subject,0), 0);
+            tmp = hv_store(rh, "serial", 6, newSVpv(x509.serial,0), 0);
+            tmp = hv_store(rh, "startdate", 9, newSVpv(x509.startdate,0), 0);
+            tmp = hv_store(rh, "enddate", 7, newSVpv(x509.enddate,0), 0);
+            tmp = hv_store(rh, "v3_email", 8, newSVpv(x509.v3_email,0), 0);
+
+            if (tmp == NULL)
+              ;
 
             free_infocert(&x509);
 
