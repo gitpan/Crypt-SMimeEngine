@@ -16,3 +16,6 @@
 
 0.0.5 Sep 24 2013
     - Check to pass tests
+
+0.0.6 Jan 16 2014
+    - bug fix to compiling with openssl < 1.0

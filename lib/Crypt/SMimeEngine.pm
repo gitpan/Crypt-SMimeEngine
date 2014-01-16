@@ -18,7 +18,7 @@ our @EXPORT_OK = qw( &init
                      &getErrStr 
                      &digest );
 
-our $VERSION = '0.05';
+our $VERSION = '0.06';
 
 require XSLoader;
 XSLoader::load(__PACKAGE__, $VERSION);
@@ -366,9 +366,14 @@ Try to contact the author.
     lorenzo.gaggini@staff.aruba.it
     http://www.exentrica.it
 
-=head1 COPYRIGHT
+    Emanuele Tomasi
+    EXEntrica s.r.l. - Aruba PEC
+    et@libersoft.it
+    http://www.exentrica.it
 
-    Copyright (c) 2008-2013 EXEntrica s.r.l.
+	=head1 COPYRIGHT
+
+    Copyright (c) 2006-2014 EXEntrica s.r.l.
     All rights reserved.
 
     You may distribute under the terms of the GNU General Public License.

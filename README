@@ -3,7 +3,7 @@ engines support.
 
 -------------------------------------------------------------------------------
 
-Copyright (c) 2006-2013 EXEntrica s.r.l. All rights reserved.
+Copyright (c) 2006-2014 EXEntrica s.r.l. All rights reserved.
 You may distribute under the terms of the GNU General Public License.
 The full text of the license can be found in the LICENSE file included
 with this module.
@@ -29,4 +29,4 @@ DEPENDENCIES
   (download from www.openssl.org)
 
 
-* For any question try to write to the author: fanton@exentrica.it
+* For any question try to write to the author: flavio.fanton@staff.aruba.it

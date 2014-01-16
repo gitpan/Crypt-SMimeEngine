@@ -1,7 +1,7 @@
 /*
 * Project       OpenPec
 * file name:    SMimeEngine.xs
-* Version:      0.0.4
+* Version:      0.0.6
 *
 * DESCRIPTION
 * Interfaccia verso la lib crypto di openssl.
@@ -27,6 +27,9 @@
 *       Supporto per SSM, bug fix 64 bit, port to openssl 1.0
 *  - 13/08/2013 - Gaggini Lorenzo
 *       Funzione digest per calcolo hash
+*  - 02/12/2013 - Tomasi Emanuele
+*       Fixata la compilazione con openssl 0.9.8
+*       Eliminati i warning del compilatore
 *
 *  Copyright (C) 2006-2013  EXENTRICA s.r.l.,  All Rights Reserved.
 *   via Roma 43 - 57126 Livorno (LI) - Italy
@@ -270,6 +273,7 @@ init(   char *cert_dir,
         int other_cert_num,
         char *engine_name,
         char *libeng_file){
+    DIR *dd;
 
     strcpy(errstring,"");
 
@@ -288,7 +292,6 @@ init(   char *cert_dir,
     }
 
     // ca path existence check
-    DIR *dd;
     if( (dd = opendir(cert_dir)) == NULL ){
         sprintf(errstring, "Error to access to CA path: %s", cert_dir);
         destroy_ui_method();
@@ -313,9 +316,9 @@ init(   char *cert_dir,
 
     // load certs to add to SMIME schema during the sign process
     if(other_cert_num && other_cert_num <= MAX_CERTS){
+        int i;
         other4sign = sk_X509_new_null();
 
-        int i;
         for(i=0; i<other_cert_num; i++){
             X509 *tmp;
             FILE *fp;
@@ -520,6 +523,8 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     X509 *cert;
     char *tmp;
     int n;
+    BIO *outmem = BIO_new(BIO_s_mem());
+    STACK_OF(OPENSSL_STRING) *emlst;
 
     strcpy(errstring,"");
 
@@ -542,7 +547,6 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     fclose(fp);
 
     // issuer
-    BIO *outmem = BIO_new(BIO_s_mem());
     X509_NAME_print_ex(outmem, X509_get_issuer_name(cert), 0,0);
     n = BIO_get_mem_data(outmem, &tmp);
     x509_out->issuer = malloc (n+1);
@@ -591,18 +595,17 @@ getCertInfo(char *file_cert, INFOCERT *x509_out){
     BIO_free(outmem);
     outmem = NULL;
 
-        const _STACK *emlst;
-        emlst = (_STACK*)(uintptr_t) X509_get1_email(cert);
-        if(sk_num(emlst)>0){
-            /* prendo solo il primo */
-            n = strlen( sk_value(emlst, 0) );
-            x509_out->v3_email = malloc (n+1);
-            x509_out->v3_email[n] = '\0';
-            memcpy(x509_out->v3_email,sk_value(emlst, 0),n);
-            X509_email_free((STACK_OF(OPENSSL_STRING) *)emlst);
-        }else{
-            x509_out->v3_email = malloc (1);
-            x509_out->v3_email[0] = '\0';
+    emlst = X509_get1_email(cert);
+    if(sk_num((STACK_OF(OPENSSL_STRING) *)emlst)>0){
+      /* prendo solo il primo */
+      n = strlen(sk_value((STACK_OF(OPENSSL_STRING) *)emlst, 0) );
+      x509_out->v3_email = malloc (n+1);
+      x509_out->v3_email[n] = '\0';
+      memcpy(x509_out->v3_email,sk_value((STACK_OF(OPENSSL_STRING) *)emlst, 0),n);
+      X509_email_free((STACK_OF(OPENSSL_STRING) *)emlst);
+    }else{
+      x509_out->v3_email = malloc (1);
+      x509_out->v3_email[0] = '\0';
     }
     X509_free(cert);
 
@@ -643,6 +646,9 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
     X509 *c = NULL;
     const EVP_MD *digest = NULL;
     char *strTmp;
+    unsigned int n;
+    unsigned char md[EVP_MAX_MD_SIZE];
+    int j;
 
     strcpy(errstring,"");
 
@@ -674,12 +680,10 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
         return 1;
     }
 
-    unsigned int n;
-    unsigned char md[EVP_MAX_MD_SIZE];
-        if (!X509_digest(c,digest,md,&n)){
-            sprintf(errstring, "out of memory");
-            X509_free(c);
-            return 1;
+    if (!X509_digest(c,digest,md,&n)){
+      sprintf(errstring, "out of memory");
+      X509_free(c);
+      return 1;
     }
     X509_free(c);
 
@@ -687,10 +691,9 @@ getFingerprint (char *filecert, char *hschema, char **strOut) {
     strTmp = (char *) malloc (4);
     **strOut = (char )(uintptr_t) NULL;
     *strTmp = (char )(uintptr_t) NULL;
-        int j;
-        for (j=0; j<(int)n; j++){
-                sprintf(strTmp,"%02X%c",md[j],(j+1 == (int)n)?'\0':':');
-                *strOut = strcat(*strOut, strTmp);
+    for (j=0; j<(int)n; j++){
+      sprintf(strTmp,"%02X%c",md[j],(j+1 == (int)n)?'\0':':');
+      *strOut = strcat(*strOut, strTmp);
     }
     free(strTmp);
 
@@ -809,6 +812,10 @@ digest(char *fname, char *dname, char **digestOut){
     EVP_MD_CTX *mdctx;
     int i, data_count;
     unsigned int dtype_len;
+    FILE *fp;
+    char *data;
+    unsigned char digest_str[EVP_MAX_MD_SIZE];
+    char* digestStart;
     strcpy(errstring,"");
 
     // initialize hash context and retrieve digest type by name
@@ -819,14 +826,11 @@ digest(char *fname, char *dname, char **digestOut){
     }
 
     // retrieve data to hash
-    FILE *fp;
     if (!(fp = fopen(fname, "r"))) {
         sprintf(errstring, "Error to open file to hash: %s", fname);
         return 1;
     }
 
-    char *data;
-    unsigned char digest_str[EVP_MAX_MD_SIZE];
     data = malloc(DIGEST_BUFF_SIZE);
 
     // hash calculation
@@ -844,8 +848,7 @@ digest(char *fname, char *dname, char **digestOut){
 
     //output
     *digestOut = malloc(sizeof(char*) * dtype_len);
-    char* digestStart = *digestOut;
-
+    digestStart = *digestOut;
     for(i = 0; i < dtype_len; i++)
     {
         sprintf(*digestOut, "%02x", digest_str[i]);
@@ -960,9 +963,9 @@ initialize(cert_dir, cert_file, key_file, other_cert, engine_name, libeng_file)
     CODE:
         I32 num_other_cert = 0;
         int i;
+        char * other_cert_tmp[num_other_cert];
 
         num_other_cert = av_len((AV *)SvRV(other_cert))+1;
-        char * other_cert_tmp[num_other_cert];
         for(i=0;i<num_other_cert;i++){
             STRLEN l;
             other_cert_tmp[i] = SvPV(*av_fetch((AV *)SvRV(other_cert),i,0),l);

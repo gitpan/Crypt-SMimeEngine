@@ -10,5 +10,6 @@ WriteMakefile(
                      'Test::Simple' => 0.44,
                     },
     LIBS         => ['-lssl -lcrypto'],
-    INC          => '-I.'
+    INC          => '-I.',
+    clean        => {FILES => "t/mail/mail.txt.signed"}
 );
